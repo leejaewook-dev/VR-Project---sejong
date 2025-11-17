@@ -1,24 +1,22 @@
 using System.Collections;
 using System.IO;
 using System.Text;
-using TMPro;
+using TMPro; // TextMeshPro를 쓰기 위해 꼭 필요!
 using UnityEngine;
 using UnityEngine.InputSystem; // 입력 시스템
 using UnityEngine.Networking;
 
-public class SimpleMic : MonoBehaviour
+public class VoiceHandler : MonoBehaviour
 {
-    [Header("설정")]
-    public string serverUrl = "http://192.168.0.XX:5000/stt"; // 서버 주소
-    public bool sendToServer = true; // 체크하면 녹음 끝날 때 서버로 전송, 끄면 녹음만 함 (테스트용)
+    [Header("1. 서버 설정")]
+    public string serverUrl = "http://YOUR_SERVER_IP:5000/stt"; // 본인 서버 주소
 
-    [Header("연결할 것들")]
-    public TextMeshProUGUI screenText; // 화면 텍스트
-    public AudioSource mySpeaker;      // 내 목소리 들려줄 스피커
+    [Header("2. 연결할 오브젝트 (필수!)")]
+    public TextMeshProUGUI statusText; // "전광판"으로 쓸 텍스트
+    public GameObject recordingIndicator; // "표시등"으로 쓸 오브젝트 (빨간 공)
 
-    [Header("버튼 설정")]
-    public InputActionProperty recordButton; // 녹음 버튼 (예: 트리거)
-    public InputActionProperty playButton;   // 재생 버튼 (예: B버튼 or 그립)
+    [Header("3. 컨트롤러 버튼 설정")]
+    public InputActionProperty recordButton; // 녹음할 버튼 (A버튼 등)
 
     private AudioClip myClip;
     private string micName;
@@ -26,58 +24,55 @@ public class SimpleMic : MonoBehaviour
 
     void Start()
     {
-        // 마이크 장치 찾기
+        // 1. 마이크 찾기
         if (Microphone.devices.Length > 0)
+        {
             micName = Microphone.devices[0];
+        }
+        else
+        {
+            if (statusText) statusText.text = "마이크를 찾을 수 없습니다!";
+        }
+
+        // 2. 시작할 때 "표시등"은 무조건 끄기
+        if (recordingIndicator)
+        {
+            recordingIndicator.SetActive(false);
+        }
     }
 
     void Update()
     {
-        // 1. 녹음 버튼 누름 -> 녹음 시작
+        // 1. 녹음 버튼을 "누르는 순간"
         if (recordButton.action.WasPressedThisFrame() && !isRecording)
         {
-            if (screenText) screenText.text = "녹음 중... (말하세요)";
-            // 최대 10초, 44100Hz로 녹음 시작
-            myClip = Microphone.Start(micName, false, 10, 44100);
+            if (statusText) statusText.text = "Recording";
+            if (recordingIndicator) recordingIndicator.SetActive(true); // ★ 피드백 켜기
+
+            myClip = Microphone.Start(micName, false, 10, 44100); // 10초 녹음
             isRecording = true;
         }
 
-        // 2. 녹음 버튼 뗌 -> 녹음 종료 (+ 서버 전송)
+        // 2. 녹음 버튼을 "떼는 순간"
         if (recordButton.action.WasReleasedThisFrame() && isRecording)
         {
             Microphone.End(micName);
             isRecording = false;
 
-            if (sendToServer)
-            {
-                if (screenText) screenText.text = "서버로 전송 중...";
-                StartCoroutine(SendAudio());
-            }
-            else
-            {
-                if (screenText) screenText.text = "녹음 완료! (재생 버튼으로 들어보세요)";
-            }
-        }
+            if (statusText) statusText.text = "Loading";
+            if (recordingIndicator) recordingIndicator.SetActive(false); // ★ 피드백 끄기
 
-        // 3. 재생 버튼 누름 -> 방금 녹음한거 들어보기
-        if (playButton.action.WasPressedThisFrame())
-        {
-            if (myClip != null)
-            {
-                if (screenText) screenText.text = "다시 듣는 중...";
-                mySpeaker.PlayOneShot(myClip); // 녹음된 클립 재생
-            }
-            else
-            {
-                if (screenText) screenText.text = "녹음된 소리가 없습니다.";
-            }
+            // 서버로 전송 시작
+            StartCoroutine(SendAudioToServer());
         }
     }
 
-    IEnumerator SendAudio()
+    IEnumerator SendAudioToServer()
     {
+        // 1. 녹음된 소리를 .wav 파일 형태로 변환
         byte[] wavData = GetWavBytes(myClip);
 
+        // 2. 서버로 보낼 폼 만들기
         WWWForm form = new WWWForm();
         form.AddBinaryData("file", wavData, "voice.wav", "audio/wav");
 
@@ -87,16 +82,20 @@ public class SimpleMic : MonoBehaviour
 
             if (www.result == UnityWebRequest.Result.Success)
             {
-                if (screenText) screenText.text = "서버 응답: " + www.downloadHandler.text;
+                // ★ 성공! 서버가 보낸 텍스트를 "전광판"에 띄우기
+                string serverResponse = www.downloadHandler.text;
+                if (statusText) statusText.text = serverResponse;
             }
             else
             {
-                if (screenText) screenText.text = "에러: " + www.error;
+                // 실패
+                if (statusText) statusText.text = "에러: " + www.error;
             }
         }
     }
 
-    // WAV 변환 함수 (그대로 유지)
+    // --- (이 아래는 건드리지 마세요!) ---
+    // 유니티 소리를 WAV 파일로 바꿔주는 마법의 함수
     byte[] GetWavBytes(AudioClip clip)
     {
         using (var stream = new MemoryStream())
